@@ -16,14 +16,17 @@ SOL_RPC = "https://api.mainnet-beta.solana.com"
 TRON_API = "https://api.trongrid.io"
 
 # ================= Tor 配置 =================
-# 独立 Tor 服务端口是 9050，Tor Browser 是 9150
-TOR_SOCKS_PORT = 9050
+# 独立 Tor 服务端口是 9060（9050 可能被占用）
+TOR_SOCKS_PORT = 9060
 TOR_PROXY = f"socks5h://127.0.0.1:{TOR_SOCKS_PORT}"
 USE_TOR = False  # 全局开关
 
 # Tor 服务路径
 TOR_EXE_PATH = "C:/Users/23157/CODE/TOR/tor-expert-bundle-windows-x86_64-14.5.7/tor/tor.exe"
-TOR_CONFIG_PATH = "C:/Users/23157/AppData/Roaming/tor/torrc"
+TOR_CONFIG_PATH = "C:/Users/23157/AppData/Roaming/tor/torrc_simple"
+
+# 存储 Tor 进程对象
+TOR_PROCESS = None
 
 def get_proxies():
     """获取代理配置"""
@@ -47,7 +50,7 @@ def check_tor_running() -> bool:
 
 def start_tor():
     """启动 Tor 服务"""
-    global USE_TOR
+    global USE_TOR, TOR_PROCESS
     
     if check_tor_running():
         print("✅ Tor 已在运行")
@@ -65,8 +68,8 @@ def start_tor():
     
     print(f"⏳ 正在启动 Tor 服务...")
     try:
-        # 后台启动 Tor
-        subprocess.Popen(
+        # 后台启动 Tor，保存进程对象
+        TOR_PROCESS = subprocess.Popen(
             [TOR_EXE_PATH, "-f", TOR_CONFIG_PATH],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -91,25 +94,74 @@ def start_tor():
 
 def stop_tor_service():
     """停止 Tor 服务"""
-    global USE_TOR
+    global USE_TOR, TOR_PROCESS
     USE_TOR = False
+    
     try:
+        # 先尝试终止我们启动的进程
+        if TOR_PROCESS is not None:
+            try:
+                TOR_PROCESS.terminate()
+                TOR_PROCESS.wait(timeout=5)
+            except:
+                pass
+            TOR_PROCESS = None
+        
+        # 用 taskkill 杀掉所有 tor.exe
         if os.name == 'nt':
-            subprocess.run(["taskkill", "/F", "/IM", "tor.exe"], 
-                         capture_output=True, check=False)
+            result = subprocess.run(
+                ["taskkill", "/F", "/IM", "tor.exe"], 
+                capture_output=True, 
+                text=True,
+                check=False
+            )
+            
+            # 等待端口释放
+            print("⏳ 等待端口释放...")
+            for i in range(10):
+                time.sleep(1)
+                if not check_tor_running():
+                    print("✅ Tor 服务已停止")
+                    return
+                print(f"   等待中... {i+1}s")
+            
+            # 如果端口还在占用，可能是僵尸连接
+            print("⚠️  端口可能仍被占用（僵尸连接），但 Tor 进程已终止")
+            print("   建议等待几秒后重试，或重启电脑")
         else:
-            subprocess.run(["pkill", "tor"], capture_output=True, check=False)
-        print("✅ Tor 服务已停止")
+            subprocess.run(["pkill", "-9", "tor"], capture_output=True, check=False)
+            time.sleep(1)
+            print("✅ Tor 服务已停止")
+            
     except Exception as e:
         print(f"❌ 停止失败: {e}")
 
 def get_my_ip():
     """获取当前出口 IP"""
     try:
-        resp = requests.get("https://api.ipify.org?format=json", 
-                          proxies=get_proxies(), 
-                          timeout=10)
-        return resp.json()["ip"]
+        # 使用多个 IP 查询服务，增加成功率
+        ip_services = [
+            "https://api.ipify.org?format=json",
+            "https://httpbin.org/ip",
+            "https://api.ip.sb/ip",
+        ]
+        
+        proxies = get_proxies()
+        
+        for url in ip_services:
+            try:
+                resp = requests.get(url, proxies=proxies, timeout=15)
+                if resp.status_code == 200:
+                    if "ipify" in url:
+                        return resp.json()["ip"]
+                    elif "httpbin" in url:
+                        return resp.json()["origin"]
+                    else:
+                        return resp.text.strip()
+            except:
+                continue
+        
+        return "获取失败"
     except Exception as e:
         return f"获取失败: {e}"
 
