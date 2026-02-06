@@ -1,0 +1,24 @@
+# 测试文件
+test_*.py
+testsol.txt
+0.txt
+
+# 可执行文件
+*.exe
+
+# Tor 配置
+tor.bat
+
+# 图片
+*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+
+# IDE
+.vscode/
+.idea/
